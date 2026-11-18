@@ -1,9 +1,9 @@
 Package: local.carplay5ga.widthfix
 Name: CarPlay 5GA - Width Fix for 5G Only
-Version: 0.0.3
+Version: 0.0.4
 Architecture: iphoneos-arm64e
 Section: Tweaks
 Priority: optional
 Maintainer: Local build project
 Depends: mobilesubstrate (>= 0.9.5000), local.carplay5ga.fsbtest (>= 0.0.1)
-Description: CarPlay-only font layout experiment. Condenses the 5 and G without modifying the existing small-cap A. Requires the independently installed CarPlay 5GA V1 bridge. No system file modifications.
+Description: CarPlay-only safer width adjustment trial (V4, avoids text-setter hooks). Condenses the 5 and G without modifying the existing small-cap A. Requires the independently installed CarPlay 5GA V1 bridge. No system file modifications.
