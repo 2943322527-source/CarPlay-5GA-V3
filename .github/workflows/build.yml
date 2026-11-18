@@ -1,0 +1,36 @@
+name: Build CarPlay 5GA WidthFix RootHide DEB
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+      - name: Install Theos with RootHide support
+        uses: waruhachi/theos-action@v2.6.6
+        with:
+          theos-src: roothide/theos
+          theos-branch: master
+          sdks-src: theos/sdks
+          sdks-branch: master
+          remotelog: false
+          libgcuniversal: false
+          altlist: false
+          comet: false
+          orion: false
+          shook: false
+          libsandy: false
+      - name: Compile and package
+        run: |
+          make clean package THEOS_PACKAGE_SCHEME=roothide FINALPACKAGE=1
+          find packages -name '*.deb' -type f -maxdepth 1 -print
+      - name: Upload RootHide DEB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CarPlay5GA-WidthFix-V3-RootHide-DEB
+          path: packages/*.deb
+          if-no-files-found: error
