@@ -19,7 +19,7 @@ static UIFont *cp5ga_narrowFont(UIFont *font) {
     UIFontDescriptor *base = font.fontDescriptor;
     NSMutableDictionary *traits = [[base objectForKey:UIFontDescriptorTraitsAttribute] mutableCopy];
     if (!traits) traits = [NSMutableDictionary dictionary];
-    traits[UIFontDescriptorTraitWidth] = @(kWidthTrait);
+    [traits setObject:@(kWidthTrait) forKey:UIFontWidthTrait];
     UIFontDescriptor *target = [base fontDescriptorByAddingAttributes:@{UIFontDescriptorTraitsAttribute: traits}];
     return [UIFont fontWithDescriptor:target size:font.pointSize];
 }
@@ -62,6 +62,6 @@ static void cp5ga_visit(UIView *v, NSUInteger depth) {
 %hook _UIStatusBarStringView
 - (void)setText:(NSString *)text {
     %orig;
-    if ([self isKindOfClass:[UIView class]]) cp5ga_visit((UIView *)self, 0);
+    if ([(UIView *)self isKindOfClass:[UIView class]]) cp5ga_visit((UIView *)self, 0);
 }
 %end
