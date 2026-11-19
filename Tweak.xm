@@ -1,87 +1,132 @@
+// CarPlay 5GA V5: read-only view probe (NO UI changes).
+// iOS 16.5 / Dopamine RootHide; load only in com.apple.CarPlayApp.
+// Purpose: identify the actual 5G-small-cap-A label and its rectangle before
+// implementing an independent overlay. Do not hook text or layout methods.
+
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
-#import <objc/runtime.h>
+#import <dispatch/dispatch.h>
+#import <objc/message.h>
 
-// V4: fix the V3 re-entrant update crash.
-// This tweak is injected ONLY into com.apple.CarPlayApp (see the existing plist).
-// V1 (FakeSignalBar bridge) must remain installed.
-// Never hook setText: or attributedText:; never walk a live view hierarchy.
-// Touch only the leading "5G"; preserve the original small-cap A (U+1D00).
+static NSUInteger cp5ga_nodes = 0;
+static NSUInteger cp5ga_hits = 0;
+static NSMutableString *cp5ga_report = nil;
 
-static char kCP5GAStyledKey;
-static const CGFloat kCP5GAWidthTrait = -0.50f;
-static const CGFloat kCP5GKerning = -0.15f;
-
-static BOOL CP5GAIsTarget(NSString *string) {
-    return [string isKindOfClass:[NSString class]] &&
-           [string isEqualToString:@"5G\u1D00"];
+static BOOL CP5GAInterestingName(NSString *name) {
+    if (!name) return NO;
+    return ([name rangeOfString:@"Status" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+            [name rangeOfString:@"String" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+            [name rangeOfString:@"Cellular" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+            [name rangeOfString:@"Signal" options:NSCaseInsensitiveSearch].location != NSNotFound);
 }
 
-static UIFont *CP5GANarrowFont(UIFont *original) {
-    if (!original) return nil;
-    UIFontDescriptor *descriptor = original.fontDescriptor;
-    if (!descriptor) return nil;
-    NSDictionary *existing = [descriptor objectForKey:UIFontDescriptorTraitsAttribute];
-    NSMutableDictionary *traits = existing ? [existing mutableCopy] : [NSMutableDictionary dictionary];
-    traits[UIFontWidthTrait] = @(kCP5GAWidthTrait);
-    UIFontDescriptor *newDescriptor = [descriptor fontDescriptorByAddingAttributes:
-        @{ UIFontDescriptorTraitsAttribute: traits }];
-    return [UIFont fontWithDescriptor:newDescriptor size:original.pointSize];
+static NSString *CP5GATextForView(UIView *view) {
+    if (![view respondsToSelector:@selector(text)]) return nil;
+    id value = ((id (*)(id, SEL))objc_msgSend)(view, @selector(text));
+    if (![value isKindOfClass:[NSString class]]) return nil;
+    return (NSString *)value;
 }
 
-static void CP5GAStyleOnce(UILabel *label) {
-    if (!label) return;
-    NSString *string = label.text;
-    if (!CP5GAIsTarget(string)) {
-        // Allow restyling if this view is later reused for a different network type.
-        if (objc_getAssociatedObject(label, &kCP5GAStyledKey)) {
-            objc_setAssociatedObject(label, &kCP5GAStyledKey, nil, OBJC_ASSOCIATION_ASSIGN);
+static BOOL CP5GAIsNetworkText(NSString *text) {
+    if (![text isKindOfClass:[NSString class]]) return NO;
+    // Never log arbitrary screen text. Only network indicators are included.
+    return ([text rangeOfString:@"5G" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+            [text rangeOfString:@"5Ｇ"].location != NSNotFound);
+}
+
+static void CP5GAInspect(UIView *view, UIWindow *window, NSUInteger depth) {
+    if (!view || depth > 13 || cp5ga_nodes++ >= 900) return;
+    NSString *name = NSStringFromClass([view class]);
+    NSString *value = CP5GATextForView(view);
+    BOOL target = CP5GAIsNetworkText(value);
+    BOOL named = CP5GAInterestingName(name);
+    if ((target || named) && cp5ga_report.length < 50000) {
+        CGRect r = [view convertRect:view.bounds toView:window];
+        NSString *parentName = view.superview ? NSStringFromClass([view.superview class]) : @"none";
+        NSString *appearance = @"";
+        if (target && [view isKindOfClass:[UILabel class]]) {
+            UILabel *label = (UILabel *)view;
+            UIFont *font = label.font;
+            appearance = [NSString stringWithFormat:@" font=%@ size=%.2f textColor=%@",
+                font.fontName ?: @"unknown", font.pointSize, label.textColor];
         }
-        return;
+        [cp5ga_report appendFormat:@"%@ depth=%lu view=%@ parent=%@ frame=(%.1f,%.1f,%.1f,%.1f) hidden=%d alpha=%.2f%@%@\n",
+         target ? @"NETWORK" : @"view", (unsigned long)depth, name, parentName,
+         r.origin.x, r.origin.y, r.size.width, r.size.height, view.hidden, view.alpha,
+         target ? [NSString stringWithFormat:@" text=%@", value] : @"", appearance];
+        if (target) cp5ga_hits++;
     }
-    // Set this marker BEFORE modifying attributedText. It prevents re-entrancy
-    // if UIKit triggers a nested layout while updating its text storage.
-    if (objc_getAssociatedObject(label, &kCP5GAStyledKey)) return;
-
-    UIFont *originalFont = label.font;
-    UIFont *narrowFont = CP5GANarrowFont(originalFont);
-    if (!originalFont || !narrowFont) return;
-
-    NSAttributedString *current = label.attributedText;
-    NSMutableAttributedString *edited = nil;
-    if (current && [current.string isEqualToString:string]) {
-        edited = [current mutableCopy];
-    } else {
-        edited = [[NSMutableAttributedString alloc] initWithString:string];
+    // Read-only traversal: never change text, font, layout, transform or layer.
+    for (UIView *child in view.subviews) {
+        CP5GAInspect(child, window, depth + 1);
+        if (cp5ga_nodes >= 900) return;
     }
-    if (edited.length != 3) return;
+}
 
-    // Explicitly preserve the A's original font: when the first character's
-    // attributed font changes, UILabel may update its default font too.
-    UIFont *originalAFont = nil;
-    if (current && current.length == 3) {
-        id attributedAFont = [current attribute:NSFontAttributeName atIndex:2 effectiveRange:NULL];
-        if ([attributedAFont isKindOfClass:[UIFont class]]) {
-            originalAFont = (UIFont *)attributedAFont;
+static NSArray<UIWindow *> *CP5GAWindows(void) {
+    NSMutableArray<UIWindow *> *result = [NSMutableArray array];
+    UIApplication *app = [UIApplication sharedApplication];
+    for (UIWindow *w in app.windows) {
+        if (![result containsObject:w]) [result addObject:w];
+    }
+    if (@available(iOS 13.0, *)) {
+        for (UIScene *scene in app.connectedScenes) {
+            if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+            for (UIWindow *w in ((UIWindowScene *)scene).windows) {
+                if (![result containsObject:w]) [result addObject:w];
+            }
         }
     }
-    if (!originalAFont) originalAFont = originalFont;
-
-    [edited addAttribute:NSFontAttributeName value:narrowFont range:NSMakeRange(0, 2)];
-    [edited addAttribute:NSKernAttributeName value:@(kCP5GKerning) range:NSMakeRange(0, 1)];
-    [edited addAttribute:NSFontAttributeName value:originalAFont range:NSMakeRange(2, 1)];
-
-    objc_setAssociatedObject(label, &kCP5GAStyledKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    label.attributedText = edited;
+    return result;
 }
 
-// On iOS 16.x, _UIStatusBarStringView is a UILabel subtype.
-// Deliberately do NOT hook setText: -- FakeSignalBar V1 already hooks it.
-%hook _UIStatusBarStringView
-- (void)layoutSubviews {
-    %orig;
-    if ([(id)self isKindOfClass:[UILabel class]]) {
-        CP5GAStyleOnce((UILabel *)(id)self);
+static void CP5GAWriteReport(NSString *report) {
+    // Multiple candidates because system-app sandbox permissions vary.
+    NSArray<NSString *> *paths = @[
+        @"/var/mobile/Library/Logs/CarPlay5GAProbe.txt",
+        @"/var/mobile/Library/Preferences/CarPlay5GAProbe.txt",
+        @"/private/var/tmp/CarPlay5GAProbe.txt",
+        [NSTemporaryDirectory() stringByAppendingPathComponent:@"CarPlay5GAProbe.txt"]
+    ];
+    NSError *err = nil;
+    for (NSString *path in paths) {
+        err = nil;
+        if ([report writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:&err]) {
+            NSLog(@"[CarPlay5GAProbe] report saved at %@", path);
+            return;
+        }
     }
+    NSLog(@"[CarPlay5GAProbe] Could not write report: %@", err);
+    NSLog(@"[CarPlay5GAProbe] %@", report);
 }
-%end
+
+static void CP5GAScan(NSUInteger run) {
+    cp5ga_nodes = 0;
+    cp5ga_hits = 0;
+    cp5ga_report = [NSMutableString stringWithFormat:
+      @"CarPlay 5GA READ-ONLY PROBE V5\nrun=%lu date=%@\nbundle=%@\n",
+      (unsigned long)run, [NSDate date], [[NSBundle mainBundle] bundleIdentifier]];
+    NSArray<UIWindow *> *windows = CP5GAWindows();
+    [cp5ga_report appendFormat:@"windows=%lu\n", (unsigned long)windows.count];
+    for (UIWindow *w in windows) {
+        [cp5ga_report appendFormat:@"WINDOW %@ bounds=(%.1f,%.1f) hidden=%d\n",
+          NSStringFromClass([w class]), w.bounds.size.width, w.bounds.size.height, w.hidden];
+        CP5GAInspect(w, w, 0);
+    }
+    [cp5ga_report appendFormat:@"totalVisited=%lu networkHits=%lu\n",
+      (unsigned long)cp5ga_nodes, (unsigned long)cp5ga_hits];
+    CP5GAWriteReport(cp5ga_report);
+}
+
+%ctor {
+    // No Logos hooks. Even if the class names differ on this device, UI is untouched.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        __block NSUInteger scanNumber = 0;
+        [NSTimer scheduledTimerWithTimeInterval:5.0 repeats:YES block:^(NSTimer *timer) {
+            scanNumber++;
+            CP5GAScan(scanNumber);
+            if (scanNumber >= 12) [timer invalidate];
+        }];
+    });
+}
+
