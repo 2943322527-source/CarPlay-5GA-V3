@@ -66,9 +66,15 @@ static void CP5GAInspect(UIView *view, UIWindow *window, NSUInteger depth) {
 static NSArray<UIWindow *> *CP5GAWindows(void) {
     NSMutableArray<UIWindow *> *result = [NSMutableArray array];
     UIApplication *app = [UIApplication sharedApplication];
+    // Keep the legacy window fallback for iOS 16 CarPlay scene discovery.
+    // The iOS 16 SDK marks UIApplication.windows deprecated; this read-only
+    // diagnostic access is intentional and should not fail -Werror builds.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     for (UIWindow *w in app.windows) {
         if (![result containsObject:w]) [result addObject:w];
     }
+#pragma clang diagnostic pop
     if (@available(iOS 13.0, *)) {
         for (UIScene *scene in app.connectedScenes) {
             if (![scene isKindOfClass:[UIWindowScene class]]) continue;
@@ -129,4 +135,3 @@ static void CP5GAScan(NSUInteger run) {
         }];
     });
 }
-
